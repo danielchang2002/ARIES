@@ -20,3 +20,6 @@ Here, we present a new approach for constructing MSAs leveraging amino acid embe
 Building on this metric, we develop ARIES (**A**lignment via **R**ec**I**procal **E**mbedding **S**imilarity), an algorithm that constructs a PLM-generated template embedding and aligns each sequence to this template via dynamic time warping in order to build a global MSA. Across diverse benchmark datasets, ARIES achieves significantly higher accuracy than existing state-of-the-art approaches, especially in low-identity regimes where traditional methods degrade, while scaling almost linearly with the number of sequences to be aligned. 
 
 Together, these results provide the first large-scale demonstration of the power of PLMs for accurate and scalable MSA construction across protein families of varying sizes and levels of similarity, highlighting the potential of PLMs to transform comparative sequence analysis.
+
+
+note: to run ARIES, make sure to change HF home and path in utils.py. All datasets used in the paper (and true reference alignments) are available in the datasets folder.
