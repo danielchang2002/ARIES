@@ -3,7 +3,9 @@ from msa_tools import *
 
 def run_clustalw(msa, msa_name, clean=False):
     infile = f'{temp_dir}/{msa_name}.fasta'
-    oufile = f'{temp_dir}/{msa_name}.aln'
+    oufile = f'{temp_dir}/{msa_name}_clustalw.aln'
+    dnd_src = f'{temp_dir}/{msa_name}.dnd'
+    dnd_dst = f'{temp_dir}/{msa_name}_clustalw.dnd'
     spawn_fasta(msa, infile)
     # Run ClustalW (assumes 'clustalw2' or 'clustalw' is in PATH)
     clustalw_cmd = [
@@ -16,15 +18,20 @@ def run_clustalw(msa, msa_name, clean=False):
         f"-OUTFILE={oufile}"
     ]
     log = subprocess.run(clustalw_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.path.exists(dnd_src) and not os.path.exists(dnd_dst):
+        try:
+            os.replace(dnd_src, dnd_dst)
+        except Exception:
+            pass
     if clean:
         os.system(f'rm -r {infile}')
-        os.system(f'rm -r {temp_dir}/{msa_name}.dnd')
+        os.system(f'rm -r {dnd_dst}')
     return oufile
 
 def run_clustalo(msa, msa_name, clean=False):
     infile = f'{temp_dir}/{msa_name}.fasta'
-    oufile = f'{temp_dir}/{msa_name}.aln'
-    dndfile = f'{temp_dir}/{msa_name}.dnd'
+    oufile = f'{temp_dir}/{msa_name}_clustalo.aln'
+    dndfile = f'{temp_dir}/{msa_name}_clustalo.dnd'
     spawn_fasta(msa, infile)
     clustalo_cmd = [
         "clustalo",
@@ -34,8 +41,7 @@ def run_clustalo(msa, msa_name, clean=False):
         "--force",
         "--threads", '10',
         "--verbose",
-        "--guidetree-out", dndfile,
-        "--guidetree-out-format", 'newick'
+        "--guidetree-out", dndfile
     ]
     log = subprocess.run(clustalo_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if clean:
@@ -45,7 +51,7 @@ def run_clustalo(msa, msa_name, clean=False):
 
 class MSAClustalO:
     def __init__(self, **kwargs):
-        self.clustal = lambda seqs, aln_name: run_clustalo(seqs, f'{aln_name}_clustalo')
+        self.clustal = lambda seqs, aln_name: run_clustalo(seqs, aln_name)
     
     def align(self, seqs, **kwargs):
         aln_name = kwargs['aln_name']
@@ -56,7 +62,7 @@ class MSAClustalO:
 
 class MSAClustalW:
     def __init__(self, **kwargs):
-        self.clustal = lambda seqs, aln_name: run_clustalw(seqs, f'{aln_name}_clustalw')
+        self.clustal = lambda seqs, aln_name: run_clustalw(seqs, aln_name)
     
     def align(self, seqs, **kwargs):
         aln_name = kwargs['aln_name']

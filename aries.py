@@ -5,6 +5,7 @@ from scoring import *
 from pairwise import *
 from clustal import *
 
+
 class ARIES:
     def __init__(self, **kwargs):
         self.plm = kwargs['plm']
@@ -13,26 +14,39 @@ class ARIES:
         self.b = kwargs.get('batch', 1)
         self.r = kwargs.get('reciprocal', 200.)
         self.g = kwargs.get('blur', 3.)
-        self.medoid_metric = kwargs.get('medoid_metric', 'edit')
-        aligner_tokens = kwargs.get('aligner', 'dtw').split('-')
-        if aligner_tokens[0] == 'dtw':
+        self.pad_char = kwargs.get('pad_char', 'X')
+        
+        # medoid config
+        self.medoid_mode = kwargs.get('medoid_mode', 'edit')
+        self.topk = kwargs.get('medoid_topk', 'log')
+        
+        # sim config
+        self.sim_metric = kwargs.get('sim_metric', 'l2-gm')
+
+        aligner_tokens = kwargs.get('aligner', 'aries').split('-')
+        if aligner_tokens[0] == 'aries':
             self.aligner = DTW(batch=True)
         elif aligner_tokens[0] == 'turnpen':
             self.aligner = TurnPenaltyDTW(tau=float(aligner_tokens[1]), batch=True)
         
     def get_embeddings(self, seqs, return_logits=False):
-        padded_seqs = polyX_paddings(seqs, self.w)
+        padded_seqs = polyX_paddings(seqs, pad_char=self.pad_char, w=self.w)
         embeddings, logits = self.plm(padded_seqs, num_hidden_states=self.h, batch=self.b)
-        embeddings = [embeddings[i, :len(padded_seqs[i]), :].to('cpu') for i in range(len(padded_seqs))]
         if return_logits:
-            logits = [logits[i, :len(padded_seqs[i]), :].to('cpu') for i in range(len(padded_seqs))]    
             return embeddings, logits
         return embeddings
 
     def build_msa(self, embeddings, seqs, consensus_embedding, verbose=True):
         if verbose:
             print(f'>>>> Aligning with template')
-        scores, paths, pairwise_scores = self.aligner.align_embeddings(consensus_embedding, embeddings, self.w, self.r, self.g, return_scores=True)
+        scores, paths, pairwise_scores = self.aligner.align_embeddings(
+            consensus_embedding, embeddings, 
+            w=self.w, 
+            reciprocal=self.r, 
+            blur=self.g, 
+            return_scores=True, 
+            sim_metric=self.sim_metric
+        )
         num_seqs = len(seqs)
         template_length = consensus_embedding.shape[0] - 2 * self.w
         edges = []
@@ -98,19 +112,22 @@ class ARIES:
         print(f'Building template')
         t = time.time()        
         msa_name = kwargs['msa_name']
-        path = f'/home/qh1002/Code/recap/temp/{msa_name}_clustalw.dnd'
+        path = f'{temp_dir}/{msa_name}_clustalw.dnd'
         if not os.path.exists(path):
-            run_clustalo(seqs, msa_name)
-        k = math.ceil(math.log2(len(seqs)))    
-        medoids = topk_medoids_from_dnd(path, k)
+            run_clustalw(seqs, msa_name)
+        medoids = topk_medoids(seqs, k=self.topk, mode=self.medoid_mode, **kwargs)
+        
+        # Synthesize medoid embedding
         medoid_embs = [embeddings[m] for m in medoids]
         medoid_seqs = [seqs[m] for m in medoids]
         global_medoid_emb = embeddings[medoids[0]]
         medoid_aln = self.build_msa(medoid_embs, medoid_seqs, global_medoid_emb)
         consensus = [s.replace('-', 'X') for s in medoid_aln]
         consensus_emb = torch.stack(self.get_embeddings(consensus), dim=0)
-        mask = torch.tensor([[1 if c != '-' else 0 for c in s] for s in polyX_paddings(medoid_aln, self.w)]).to(consensus_emb.device)
+        mask = torch.tensor([[1 if c != '-' else 0 for c in s] for s in polyX_paddings(medoid_aln, pad_char=self.pad_char, w=self.w)]).to(consensus_emb.device)
         consensus_emb = (consensus_emb * mask[:, :, None]).sum(dim=0) / mask.sum(dim=0)[:, None]
-        aln_time = time.time() - t
         print(f'Building MSA given template')
-        return self.build_msa(embeddings, seqs, consensus_emb), (emb_time, aln_time)
+
+        alns = self.build_msa(embeddings, seqs, consensus_emb)
+        aln_time = time.time() - t
+        return alns, (emb_time, aln_time)

@@ -15,13 +15,34 @@ class PLMWrapper(nn.Module):
     def __init__(self, plm, **kwargs):
         super(PLMWrapper, self).__init__()
         self.model_name = plm
-        if 'prottrans' in plm:
-            self.plm = T5ForConditionalGeneration.from_pretrained(MODELS[plm])
-            self.tokenizer = T5Tokenizer.from_pretrained(MODELS[plm])
+        if plm in MODELS:
+            if 'prottrans' in plm:
+                self.plm = T5ForConditionalGeneration.from_pretrained(MODELS[plm])
+                self.tokenizer = T5Tokenizer.from_pretrained(MODELS[plm])
+            elif plm == 'protbert':
+                self.plm = AutoModelForMaskedLM.from_pretrained(MODELS[plm])
+                self.tokenizer = AutoTokenizer.from_pretrained(MODELS[plm])
+            elif 'esm2' in plm:
+                self.plm = EsmForMaskedLM.from_pretrained(MODELS[plm])
+                self.tokenizer = AutoTokenizer.from_pretrained(MODELS[plm])
+            else:
+                raise ValueError(f'PLM model {plm} not supported.')
         else:
-            self.plm = EsmForMaskedLM.from_pretrained(MODELS[plm])
-            self.tokenizer = AutoTokenizer.from_pretrained(MODELS[plm])
+            try:
+                if 'prot_t5' in plm:
+                    self.plm = T5ForConditionalGeneration.from_pretrained(plm)
+                    self.tokenizer = T5Tokenizer.from_pretrained(plm)
+                elif "esm2" in plm:
+                    self.plm = EsmForMaskedLM.from_pretrained(plm)
+                    self.tokenizer = AutoTokenizer.from_pretrained(plm)
+                else:
+                    self.plm = AutoModelForMaskedLM.from_pretrained(plm)
+                    self.tokenizer = AutoTokenizer.from_pretrained(plm)
+            except:
+                raise ValueError(f'PLM model {plm} not supported.')
+
         self.hidden_size = self.plm.config.hidden_size
+        self.is_t5 = getattr(self.plm.config, "model_type", "") == "t5"
         self.plm.gradient_checkpointing_enable()
         if kwargs.get('freeze_backbone', True):
             self.plm.eval()
@@ -30,11 +51,15 @@ class PLMWrapper(nn.Module):
     # Take input sequence, return input ids and attention_mask
     def tokenize(self, input_seqs):
         input_seqs = [' '.join(s) for s in input_seqs]
-        tokenized_seqs = self.tokenizer.batch_encode_plus(
-            input_seqs, add_special_tokens=True, 
-            padding="longest", return_tensors='pt'
+        # input_seqs = [s.replace('!', '<pad>') for s in input_seqs]
+        tokenized_seqs = self.tokenizer(
+            input_seqs,
+            add_special_tokens=True,
+            padding="longest",
+            return_tensors="pt",
         )
-        input_ids, attn_mask = tokenized_seqs['input_ids'], tokenized_seqs['attention_mask']
+        input_ids = tokenized_seqs["input_ids"]
+        attn_mask = tokenized_seqs["attention_mask"]
         return input_ids.to(self.plm.device), attn_mask.to(self.plm.device)
     
     def decode(self, hidden_state):
@@ -43,34 +68,98 @@ class PLMWrapper(nn.Module):
         return [s.replace(' ', '') for s in seqs]
 
     def forward_small_batch(self, input_ids, attn_mask, **kwargs):
-        outputs = self.plm(input_ids, attn_mask, labels=input_ids, output_hidden_states=True, return_dict=True)    
-        hs = outputs.encoder_hidden_states if 'prottrans' in self.model_name else outputs.hidden_states
+        outputs = self.plm(input_ids=input_ids, attention_mask=attn_mask, labels=input_ids, output_hidden_states=True, return_dict=True)
+        hs = outputs.encoder_hidden_states if self.is_t5 else outputs.hidden_states
         retrieve_hs = kwargs.get('num_hidden_states', 1)
         if isinstance(retrieve_hs, list):
-            embeddings = [hs[i][:, 0 if 'prottrans' in self.model_name else 1:].to('cpu') for i in retrieve_hs]
+            # prottrans dont have CLS so we shave it away from esm embeddings (not required for alignment)
+            embeddings = [hs[i][:, 0 if self.is_t5 else 1:].to('cpu') for i in retrieve_hs]
             embeddings = torch.cat(embeddings, dim=-1)
         else:
+            # prottrans dont have CLS so we shave it away from esm embeddings (not required for alignment)
             assert isinstance(retrieve_hs, int), 'num_hidden_states must be either list or int'
-            embeddings = [hs[i][:, 0 if 'prottrans' in self.model_name else 1:].to('cpu') for i in range(len(hs) - kwargs.get('num_hidden_states', 1), len(hs))]
+            embeddings = [hs[i][:, 0 if self.is_t5 else 1:].to('cpu') for i in range(len(hs) - kwargs.get('num_hidden_states', 1), len(hs))]
             embeddings = torch.cat(embeddings, dim=-1)
-        logits = outputs.logits.to('cpu')
+        # prottrans dont have CLS so we shave it away from esm embeddings (not required for alignment)
+        logits = outputs.logits[:, 0 if self.is_t5 else 1:].to('cpu')
         del outputs
         torch.cuda.empty_cache()
         return embeddings, logits
 
     def forward(self, seqs, **kwargs):
         batch = kwargs.get('batch', None)
-        input_ids, attn_mask = self.tokenize(seqs) if kwargs.get('tokenize', True) else seqs
+        maxlen = kwargs.get('maxlen', 1022)
+        overlap = kwargs.get('overlap', 750)
+        tiles = []
+        sid_to_tid = defaultdict(list)
+        for i, s in enumerate(seqs):
+            if len(s) < maxlen:
+                tiles.append(s)
+                sid_to_tid[i].append(len(tiles) - 1)
+            else:
+                start = 0
+                while start < len(s):
+                    tiles.append(s[start: min(len(s), start + maxlen)])
+                    sid_to_tid[i].append(len(tiles) - 1)
+                    start += overlap
+
+        input_ids, attn_mask = self.tokenize(tiles) if kwargs.get('tokenize', True) else tiles
         if batch is None:
-            return self.forward_small_batch(input_ids, attn_mask, **kwargs)
+            enc_embeddings, logits = self.forward_small_batch(input_ids, attn_mask, **kwargs)
         else:
             enc_embeddings, logits = [], []
-            for j in trange(0, len(seqs), batch):
-                batch_end = min(j + batch, len(seqs))
+            for j in trange(0, len(tiles), batch):
+                batch_end = min(j + batch, len(tiles))
                 ij, aj, = input_ids[j: batch_end], attn_mask[j: batch_end]
                 ej, lj = self.forward_small_batch(ij, aj, **kwargs)
                 enc_embeddings.append(ej)
                 logits.append(lj)
             enc_embeddings = torch.cat(enc_embeddings, dim=0)
             logits = torch.cat(logits, dim=0)
-            return enc_embeddings, logits
+
+        # merge tiles, strip eos
+        final_embeddings = []
+        final_logits = []
+        for i in range(len(seqs)):
+            if len(sid_to_tid[i]) == 1:
+                tid = sid_to_tid[i][0]
+                tile_length = len(tiles[tid])
+                final_embeddings.append(enc_embeddings[tid][:tile_length])
+                final_logits.append(logits[tid][:tile_length])
+            else:
+                device = enc_embeddings.device
+                logit = torch.zeros(len(seqs[i]), logits.shape[-1], device=device)
+                embedding = torch.zeros(len(seqs[i]), enc_embeddings.shape[-1], device=device)
+                num_tiles = torch.zeros(len(seqs[i]), device=device)
+                for j, tid in enumerate(sid_to_tid[i]):
+                    tile_length = len(tiles[tid])
+                    start_idx = j * overlap
+                    end_idx = start_idx + tile_length
+                    logit[start_idx: end_idx] += logits[tid][:tile_length].to(device)
+                    embedding[start_idx: end_idx] += enc_embeddings[tid][:tile_length].to(device)
+                    num_tiles[start_idx: end_idx] += 1
+                embedding = embedding / num_tiles[:, None]
+                logit = logit/ num_tiles[:, None]
+                final_embeddings.append(embedding.to('cpu'))
+                final_logits.append(logit.to('cpu'))
+                del embedding, logit, num_tiles
+                torch.cuda.empty_cache()
+        del enc_embeddings, logits
+        torch.cuda.empty_cache()
+        return final_embeddings, final_logits
+
+if __name__ == '__main__':
+    from msa_tools import *
+    set_seed(123)
+    plm = PLMWrapper('esm2-35M').to('cuda')
+    seqs = [
+        random_protein_sequence(length=random.randint(500, 750))
+        for i in range(5)
+    ]
+
+    seqs = polypad_paddings(seqs, w=4)
+    
+    embeddings, logits = plm(seqs)
+
+    pprint([len(s) for s in seqs])
+    pprint([e.shape for e in embeddings])

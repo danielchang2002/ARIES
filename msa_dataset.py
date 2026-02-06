@@ -1,19 +1,10 @@
 from utils import *
-import re
-from torch.utils.data import Dataset, DataLoader, Subset
-from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset, DataLoader
 
 DATASET_DIRS = {
-    'RV11': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV11", #<20% sequence identity
-    'RV20': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV20", #families aligned with a highly divergent "orphan" sequence
-    'RV30': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV30", #subgroups with <25% residue identity between groups
-    'RV40': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV40", #sequences with N/C-terminal expansions
-    'RV50': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV50", #internal insertions
-    'RV12': "/scratch/gpfs/ia3026/plm-aln/datasets/balibase/bb3_release/RV12", #20-40% sequence identity
-    'HOMSTRAD': "/scratch/gpfs/ia3026/plm-aln/datasets/homstrad", 
-    'QUANTEST': "/scratch/gpfs/ia3026/plm-aln/datasets/QuanTest2", 
-    'QUANTEST20': ("/scratch/gpfs/ia3026/plm-aln/datasets/QuanTest2", "/scratch/gpfs/ia3026/plm-aln/datasets/QuanTest2_20seqs"),
-    'QUANTEST1000': ("/scratch/gpfs/ia3026/plm-aln/datasets/QuanTest2", "/scratch/gpfs/ia3026/plm-aln/datasets/QuanTest2_full")
+    'BAliBASE': "./datasets/BAliBASE/inputs",
+    'HOMSTRAD': "./datasets/HOMSTRAD/inputs",
+    'QuanTest2': "./datasets/QuanTest2/inputs",
 }
 
 class MSADataset(Dataset):
@@ -22,122 +13,177 @@ class MSADataset(Dataset):
         self.max_len = max_len
         self.msa_dir = msa_dir
         self.entries = self.load_dataset()
-    
+
     def load_dataset(self):
         raise NotImplementedError
 
     def __len__(self):
         return len(self.entries)
-    
+
     def __getitem__(self, idx):
-        msa_name, msa, ungapped = self.entries[idx]
-        return msa_name, msa, ungapped
+        return self.entries[idx]
 
-class BalibaseDataset(MSADataset):
-    def __init__(self, msa_dir, min_len=0, max_len=1022):
-        super(BalibaseDataset, self).__init__(msa_dir, min_len, max_len)
-    
+
+class FastaFolderDataset(MSADataset):
+    def __init__(self, msa_dir, min_len=0, max_len=1022, exts=(".fasta",), ref_dir=None, include_refs=False):
+        self.exts = exts
+        self.ref_dir = ref_dir
+        self.include_refs = include_refs
+        self.dataset_tag = self._infer_dataset_tag(msa_dir, ref_dir)
+        super().__init__(msa_dir, min_len, max_len)
+
     def load_dataset(self):
         entries = []
         for fname in os.listdir(self.msa_dir):
-            if not re.match(r"BB\d{5}\.msf$", fname):  # Skip truncated or malformed
+            if not fname.endswith(self.exts):
                 continue
-            base = fname[:-4]  # BBnnnnn
-            msf_path = os.path.join(self.msa_dir, f"{base}.msf")
-            tfa_path = os.path.join(self.msa_dir, f"{base}.tfa")
-            if os.path.exists(msf_path) and os.path.exists(tfa_path):
-                msa = self.load_msa(msf_path)
-                if msa:
-                    ungapped = [s.replace(".", "").replace("-", "").upper() for s in msa.values()]
-                    lengths = [len(s) for s in ungapped]
-                    if (np.min(lengths) >= self.min_len) and (np.max(lengths) <= self.max_len):
-                        entries.append((base, msa, ungapped))
+
+            msa_name = os.path.splitext(fname)[0]
+            msa = self.load_fasta(os.path.join(self.msa_dir, fname))
+            if not msa:
+                continue
+
+            msa = {k: s.upper() for k, s in msa.items()}
+            ungapped = [s.replace(".", "").replace("-", "") for s in msa.values()]
+            lengths = [len(s) for s in ungapped]
+            if (np.min(lengths) < self.min_len) or (np.max(lengths) > self.max_len):
+                continue
+
+            if not self.include_refs:
+                entries.append((msa_name, msa, ungapped))
+                continue
+
+            ref_seqs, ref_ids = self.load_ref_msa(msa_name)
+            ref_ordered = None
+            ref_indices = None
+
+            if ref_seqs:
+                if self.dataset_tag and "QUANTEST" in self.dataset_tag.upper():
+                    msa_ungapped = [s.replace("-", "").replace(".", "") for s in msa.values()]
+                    used = set()
+                    ref_indices = []
+                    ref_ordered = []
+
+                    for rs in ref_seqs:
+                        rs_ungapped = rs.replace("-", "").replace(".", "")
+                        match_idx = None
+                        for i, mu in enumerate(msa_ungapped):
+                            if i in used:
+                                continue
+                            if mu == rs_ungapped:
+                                match_idx = i
+                                break
+                        if match_idx is None:
+                            ref_indices = None
+                            ref_ordered = None
+                            break
+                        used.add(match_idx)
+                        ref_indices.append(match_idx)
+                        ref_ordered.append(rs)
+                else:
+                    ref_map = dict(zip(ref_ids, ref_seqs))
+                    ref_indices = [i for i, k in enumerate(msa.keys()) if k in ref_map]
+                    ref_ordered = [ref_map[k] for k in msa.keys() if k in ref_map]
+                    if not ref_ordered:
+                        ref_ordered = None
+                        ref_indices = None
+
+            entries.append((msa_name, msa, ungapped, ref_ordered, ref_indices))
         return entries
 
-    def load_msa(self, msa_path):
+    def load_fasta(self, fasta_path):
         msa = {}
         try:
-            lines = [l.strip() for l in open(msa_path, "r").readlines()]
-            if "//" not in lines:
-                return None
-            lines = [l for l in lines[lines.index('//') + 1:] if l != ""]
-            for l in lines:
-                tokens = l.split()
-                if not tokens:
-                    continue
-                name = tokens[0]
-                seq = ''.join(tokens[1:])
-                msa.setdefault(name, "")
-                msa[name] += seq
+            for r in SeqIO.parse(fasta_path, "fasta"):
+                msa[r.id] = str(r.seq).replace("*", "")
             return msa if msa else None
         except Exception as e:
-            print(f"Failed to parse {path}: {e}")
+            print(f"Failed to parse {fasta_path}: {e}")
             return None
 
-class HomstradDataset(MSADataset):
-    def __init__(self, msa_dir, min_len=0, max_len=1022, msa_ext=".aln", prefix=">P1;"):
-        self.msa_ext = msa_ext
-        self.prefix = prefix
-        super(HomstradDataset, self).__init__(msa_dir, min_len, max_len)
-        
-    def load_dataset(self):
-        entries = []
-        for fname in os.listdir(self.msa_dir):
-            msa_name = fname.split('.')[0]
-            if not fname.endswith(self.msa_ext):
+    def _infer_dataset_tag(self, msa_dir, ref_dir):
+        for c in (msa_dir, ref_dir):
+            if not c:
                 continue
-            msa = self.load_msa(os.path.join(self.msa_dir, fname))
-            if msa:
-                msa = {k: s.upper() for k, s in msa.items()}
-                ungapped = [s.replace(".", "").replace("-", "") for s in msa.values()]
-                lengths = [len(s) for s in ungapped]
-                if (np.min(lengths) >= self.min_len) and (np.max(lengths) <= self.max_len):
-                    entries.append((msa_name, msa, ungapped))
-        return entries
+            name = os.path.basename(os.path.dirname(c)) if os.path.basename(c) == "inputs" else os.path.basename(c)
+            if name:
+                return name
+        return None
 
-    def load_msa(self, msa_path):
-        msa = {}
-        try:
-            lines = [l.strip() for l in  open(msa_path, "r").readlines()]
-            current_id = None
-            for line in lines:
-                if line.startswith(self.prefix):
-                    current_id = line[4:]
-                    msa[current_id] = ""
-                elif current_id is not None:
-                    msa[current_id] += line.replace("*", "")  # remove trailing *
-            return msa if msa else None
-        except Exception as e:
-            print(f"Failed to parse {msa_path}: {e}")
-            return None
+    def _remove_all_gap_cols(self, seqs, gap_chars="-."):
+        if not seqs:
+            return seqs
+        L = len(seqs[0])
+        keep = [not all(s[i] in gap_chars for s in seqs) for i in range(L)]
+        return [''.join(s[i] for i in range(L) if keep[i]) for s in seqs]
 
-class QuanTestRefDataset(HomstradDataset):
-    def __init__(self, msa_dir, min_len=0, max_len=1022, msa_ext=".ref", prefix=">seq"):
-        super(QuanTestRefDataset, self).__init__(msa_dir, min_len, max_len, msa_ext, prefix)
+    def load_ref_msa(self, msa_name):
+        if not self.ref_dir:
+            return None, None
 
-class QuanTestDataset(MSADataset):
-    def __init__(self, msa_dir, min_len=0, max_len=1022, msa_ext=".vie.20seqs.fasta", prefix=">seq"):
-        ref_dir, full_dir = msa_dir
-        ref_dataset = QuanTestRefDataset(ref_dir, min_len, max_len, msa_ext=".ref", prefix=">seq")
-        full_dataset = QuanTestRefDataset(full_dir, min_len, max_len, msa_ext=msa_ext, prefix=">seq")
-        ref_entries = {
-            msa_name: msa for msa_name, msa, _ in ref_dataset.entries
-        }
-        full_entries = {
-            msa_name: msa for msa_name, msa, _ in full_dataset.entries
-        }
-        self.entries = []
-        for msa_name in ref_entries.keys():
-            self.entries.append((msa_name, ref_entries[msa_name], list(full_entries[msa_name].values())))
+        for ext in (".aln", ".fasta", ".fa"):
+            path = os.path.join(self.ref_dir, f"{msa_name}{ext}")
+            if not os.path.exists(path):
+                continue
+            try:
+                records = list(SeqIO.parse(path, "fasta"))
+                if not records:
+                    return None, None
 
-def get_dataset(dataset_name):
-    if dataset_name == 'HOMSTRAD':
-        return DataLoader(HomstradDataset(DATASET_DIRS[dataset_name]), batch_size=1, collate_fn = lambda b: b)
-    elif dataset_name == 'QUANTEST':
-        return DataLoader(QuanTestRefDataset(DATASET_DIRS[dataset_name]), batch_size=1, collate_fn = lambda b: b)
-    elif dataset_name == 'QUANTEST20':
-        return DataLoader(QuanTestDataset(DATASET_DIRS[dataset_name], msa_ext=".vie.20seqs.fasta"), batch_size=1, collate_fn = lambda b: b)
-    elif dataset_name == 'QUANTEST1000':
-        return DataLoader(QuanTestDataset(DATASET_DIRS[dataset_name], msa_ext=".vie"), batch_size=1, collate_fn = lambda b: b)
+                # strip '*' everywhere so refs match model outputs
+                seqs = [str(r.seq).upper().replace("*", "") for r in records]
+                ids = [r.id for r in records]
+
+                if self.dataset_tag and "QUANTEST" in self.dataset_tag.upper():
+                    seqs = self._remove_all_gap_cols(seqs[:3], gap_chars="-.")
+                    ids = ids[:3]
+
+                return seqs, ids
+            except Exception as e:
+                print(f"Failed to parse {path}: {e}")
+                return None, None
+
+        return None, None
+
+
+def _resolve_dataset_dir(dataset_name_or_dir):
+    if dataset_name_or_dir in DATASET_DIRS:
+        return DATASET_DIRS[dataset_name_or_dir]
+    if os.path.isdir(dataset_name_or_dir):
+        return dataset_name_or_dir
+    raise ValueError(f"Unknown dataset or directory: {dataset_name_or_dir}")
+
+
+def _resolve_ref_dir(dataset_name_or_dir):
+    if dataset_name_or_dir in DATASET_DIRS:
+        base = os.path.dirname(DATASET_DIRS[dataset_name_or_dir])
+        ref_dir = os.path.join(base, "reference_outputs")
     else:
-        return DataLoader(BalibaseDataset(DATASET_DIRS[dataset_name]), batch_size=1, collate_fn = lambda b: b)
+        if os.path.basename(dataset_name_or_dir) == "inputs":
+            base = os.path.dirname(dataset_name_or_dir)
+            ref_dir = os.path.join(base, "reference_outputs")
+        else:
+            ref_dir = None
+    return ref_dir if ref_dir and os.path.isdir(ref_dir) else None
+
+
+def get_dataset(dataset_name, include_refs=False, ref_dir=None, max_len=1022):
+    msa_dir = _resolve_dataset_dir(dataset_name)
+    if include_refs:
+        ref_dir = ref_dir if ref_dir is not None else _resolve_ref_dir(dataset_name)
+    else:
+        ref_dir = None
+    return DataLoader(
+        FastaFolderDataset(msa_dir, ref_dir=ref_dir, include_refs=include_refs, max_len=max_len),
+        batch_size=1,
+        collate_fn=lambda b: b
+    )
+
+
+def prepare_ref_eval(pred_alns, ref_indices=None, ref_mask=None):
+    eval_alns = pred_alns
+    if ref_indices is not None:
+        eval_alns = [eval_alns[i] for i in ref_indices]
+    if ref_mask is not None:
+        eval_alns = [''.join(s[i] for i, keep in enumerate(ref_mask) if keep) for s in eval_alns]
+    return eval_alns

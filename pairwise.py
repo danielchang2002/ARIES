@@ -64,13 +64,29 @@ class WavefrontDP:
         return self.align_batch(M) if self.batch else self.align_single(M)
     
     # make sure to send e1, e2 to cuda first
-    def align_embeddings(self, e1, e2, w, reciprocal=200., blur=3., return_scores=False):
+    def align_embeddings(self, e1, e2, w, reciprocal=200., blur=3., return_scores=False, sim_metric='l2'):
+        if sim_metric == 'l2':
+            sim_metric = l2_similarity 
+        elif sim_metric == 'cosine':
+            sim_metric = cosine_similarity
+        elif sim_metric == 'l2-or':
+            sim_metric = l2_similarity_only_reciprocal
+        elif sim_metric == 'l2-gm':
+            sim_metric = l2_similarity_geometric_mean
+        elif sim_metric == 'l2-gm-or':
+            sim_metric = l2_similarity_geometric_mean_only_reciprocal
+        elif sim_metric == 'l2-gm-sq':
+            sim_metric = l2_similarity_geometric_mean_squared_dist
+        elif sim_metric == 'l2-sq':
+            sim_metric = l2_similarity_squared_dist
+
+        device = e1.device if isinstance(e1, torch.Tensor) else None
         if self.batch:
             assert isinstance(e2, list) and isinstance(e1, torch.Tensor), "input 2 must be list, input 1 tensor"
-            M = [l2_similarity(e1, e, w, reciprocal, blur, device='cuda') for e in e2]
+            M = [sim_metric(e1, e, w, reciprocal, blur, device=device) for e in e2]
         else:
             assert isinstance(e1, torch.Tensor) and isinstance(e2, torch.Tensor), "both inputs must be tensors"
-            M = l2_similarity(e1, e2, w, reciprocal, blur, device='cuda')
+            M = sim_metric(e1, e2, w, reciprocal, blur, device=device)
         if return_scores:
             return *self.align(M), M
         else:

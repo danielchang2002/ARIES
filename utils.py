@@ -1,7 +1,6 @@
 # set up directories
 import os
-os.environ['HF_HOME'] = '/scratch/gpfs/qh1002/.cache/huggingface'
-temp_dir =  f'/home/qh1002/Code/recap/temp'
+temp_dir = os.path.abspath("./tmp")
 os.makedirs(temp_dir, exist_ok=True)
 
 # PyTorch
@@ -56,7 +55,10 @@ def set_seed(seed=2603):
 def num_params(net):
     return sum(p.numel() for p in net.parameters())
 
-def spawn_fasta(seqs, fasta_path):
+def spawn_fasta(seqs, fasta_path, maxlen=None):
+    maxlen = maxlen or max((len(s) for s in seqs), default=0)
+    if maxlen == 0:
+        raise ValueError("spawn_fasta received only empty sequences")
     records = [SeqRecord(Seq(s if len(s) > 0 else '-' * maxlen), id=f'seq{i}', description="") for i, s in enumerate(seqs)]
     with open(fasta_path, 'w') as output_handle:
         SeqIO.write(records, output_handle, "fasta")

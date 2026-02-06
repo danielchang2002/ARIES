@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Temp / editor files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+*egg*
+
+# Common temp dirs
+tmp/
+temp/
+.cache/

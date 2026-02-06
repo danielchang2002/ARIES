@@ -126,6 +126,36 @@ def _msa_to_column_multiset(msa, gap_chars=('-', '.'), min_residues=2):
             sigs.append(tuple(sig))
     return Counter(sigs)
 
+def alignment_order_from_dnd(dnd_path):
+    tree = Phylo.read(dnd_path, "newick")
+
+    idx = {}
+    order = []
+
+    # Assign indices to leaves
+    for leaf in tree.get_terminals():
+        idx[leaf] = int(leaf.name[3:])
+    next_idx = len(idx)
+        
+
+    # Postorder traversal
+    for clade in tree.get_nonterminals(order="postorder"):
+        children = clade.clades
+
+        # Collapse polytomies via left-fold
+        cur = idx[children[0]]
+        for child in children[1:]:
+            nxt = idx[child]
+            order.append((cur, nxt, next_idx))
+
+            # new merged sequence
+            cur = next_idx
+            next_idx += 1
+
+        # assign final merged cluster index to this clade
+        idx[clade] = cur
+
+    return order
 
 def multiple_tc_score(refs, preds, normalize=True, gap_chars=('-', '.'), min_residues=2):
     preds = reorder_by_sequences(refs, preds[:len(refs)], gap_chars=gap_chars)
@@ -134,6 +164,35 @@ def multiple_tc_score(refs, preds, normalize=True, gap_chars=('-', '.'), min_res
     num_correct = sum(min(ref_sig[sig], pred_sig.get(sig, 0)) for sig in ref_sig)
     num_ref_cols = sum(ref_sig.values())
     return num_correct / (num_ref_cols if normalize else 1)
+
+def topk_medoids(seqs, k=1, mode='edit', **kwargs):
+    n = len(seqs)
+    if k == 'log':
+        k = min(n, math.ceil(math.log2(n)))
+    elif k == 'logn':
+        k = min(n, math.ceil(math.log(n)))
+    assert isinstance(k, int), 'non-integer k'
+    if mode == 'edit':
+        D = torch.zeros((n, n))
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = edit_distance(seqs[i], seqs[j])
+                D[i, j] = D[j, i] = d
+        total_dist = D.sum(dim=1)
+        medoids = torch.topk(-total_dist, k=k).indices.tolist()
+        del D, total_dist
+    elif mode == 'meanpool':
+        device = seqs[0].device if len(seqs) > 0 else 'cpu'
+        seqs = torch.stack([torch.mean(s.to(device), dim=0) for s in seqs], dim=0)
+        D = torch.cdist(seqs, seqs)
+        total_dist = D.sum(dim=1)
+        medoids = torch.topk(-total_dist, k=k).indices.tolist()
+        del D, total_dist
+    elif mode == 'dnd':
+        msa_name = kwargs['msa_name']
+        dnd_path = f'{temp_dir}/{msa_name}_clustalw.dnd'
+        medoids = topk_medoids_from_dnd(dnd_path, k) 
+    return medoids
 
 def topk_medoids_from_dnd(dnd_path, k=1):
     tree = Phylo.read(dnd_path, "newick")
@@ -187,8 +246,8 @@ def topk_medoids_from_dnd(dnd_path, k=1):
 def reflect_paddings(seqs, w=0):
     return [s[1:w+1][::-1] + s + s[-w-1:-1][::-1] for s in seqs]
 
-def polyX_paddings(seqs, w=0):
-    polyX_padding = 'X' * w
+def polyX_paddings(seqs, pad_char='X', w=0):
+    polyX_padding = pad_char * w
     return [polyX_padding + s + polyX_padding for s in seqs]
 
 def randomAA_paddings(seqs, w=0):
@@ -196,4 +255,7 @@ def randomAA_paddings(seqs, w=0):
     pad_right = ''.join(random.choice("ACDEFGHIKLMNPQRSTVWY") for _ in range(w))
     return [pad_left + s + pad_right for s in seqs]
 
-    
+def evaluate_msa(alns, refs):        
+    sp_score = multiple_sp_score(refs, alns, normalize=True)
+    tc_score = multiple_tc_score(refs, alns, normalize=True)
+    return sp_score, tc_score

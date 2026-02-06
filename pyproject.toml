@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aries"
+version = "0.1.0"
+description = "ARIES: Alignment via Reciprocal Embedding Similarity"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ARIES Contributors" }]
+
+dependencies = [
+  "torch==2.6.0+cu124",
+  "transformers==5.0.0",
+  "tokenizers==0.22.2",
+  "huggingface_hub==1.4.0",
+  "biopython==1.86",
+  "python-Levenshtein==0.27.3",
+  "numpy==2.2.6",
+  "scipy==1.15.2",
+  "scikit-learn==1.7.2",
+  "pandas==2.3.3",
+  "matplotlib==3.9.1",
+  "tqdm==4.67.3",
+  "requests==2.32.5",
+  "sentencepiece==0.2.0",
+  "protobuf==5.29.3",
+  "tiktoken==0.12.0",
+]
+
+[project.scripts]
+aries = "run_aries:main"
+
+[tool.setuptools]
+py-modules = [
+  "aries",
+  "run_aries",
+  "run_test_battery",
+  "msa_dataset",
+  "msa_tools",
+  "plm_wrapper",
+  "clustal",
+  "pairwise",
+  "scoring",
+  "utils",
+]
