@@ -22,4 +22,45 @@ Building on this metric, we develop ARIES (**A**lignment via **R**ec**I**procal 
 Together, these results provide the first large-scale demonstration of the power of PLMs for accurate and scalable MSA construction across protein families of varying sizes and levels of similarity, highlighting the potential of PLMs to transform comparative sequence analysis.
 
 
-note: to run ARIES, make sure to change HF home and path in utils.py. All datasets used in the paper (and true reference alignments) are available in the datasets folder.
+---
+
+## Quickstart
+
+### 1) Clone
+```
+git clone https://github.com/Singh-Lab/ARIES.git
+cd ARIES
+```
+
+### 2) Create the conda environment
+```
+conda env create -f environment.yml
+conda activate ARIES
+```
+
+### 3) Install the ARIES package
+```
+pip install .
+```
+
+### 4) Run ARIES from command line
+
+#### Built-in datasets (automatically downloaded; SP and TC scores generated automatically)
+```
+aries --input BAliBASE --output-dir ./tmp/bali_out
+aries --input HOMSTRAD --output-dir ./tmp/hom_out
+aries --input QuanTest2 --output-dir ./tmp/quan_out
+```
+
+#### Custom input folder (optional reference alignment directory for SP/TC scoring)
+```
+aries --input /path/to/fastas --output-dir ./tmp/out
+aries --input /path/to/fastas --ref-dir /path/to/refs --output-dir ./tmp/out
+```
+
+Notes:
+- Input files must be FASTA (`.fasta`).
+- Reference files must be FASTA (`.aln`, `.fasta`, or `.fa`).
+- Reference filenames must match the corresponding input filename stem to enable scoring.
+- Required arguments: `--input` (or `-i`) and `--output-dir` (or `-o`).
+- Run `aries -h` to see all options and defaults.
