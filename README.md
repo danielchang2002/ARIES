@@ -47,14 +47,14 @@ pip install .
 
 #### Built-in datasets (automatically downloaded; SP and TC scores generated automatically)
 ```
-aries --input BAliBASE --output-dir ./tmp/bali_out
-aries --input HOMSTRAD --output-dir ./tmp/hom_out
-aries --input QuanTest2 --output-dir ./tmp/quan_out
+aries --input BAliBASE --output-dir ./outputs/BAliBASE
+aries --input HOMSTRAD --output-dir ./outputs/HOMSTRAD
+aries --input QuanTest2 --output-dir ./outputs/QuanTest2
 ```
 
 #### Custom input folder (optional reference alignment directory for SP/TC scoring)
 ```
-aries --input /path/to/fastas --output-dir ./tmp/out
+aries --input /path/to/fastas --output-dir ./path/to/outputs
 aries --input /path/to/fastas --ref-dir /path/to/refs --output-dir ./tmp/out
 ```
 
