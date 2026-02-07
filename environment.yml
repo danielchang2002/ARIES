@@ -217,4 +217,3 @@ dependencies:
       - torch==2.6.0+cu124
       - torchmetrics==1.8.2
       - triton==3.2.0
-prefix: /scratch/gpfs/MONA/ia3026/.conda/envs/ARIES
