@@ -68,7 +68,7 @@ Notes:
 ## CLI Reference
 
 ```
-usage: run_aries.py -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
+usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
                     [--compare {clustalo,clustalw}]
                     [--plm PLM] [--num-hidden-states NUM_HIDDEN_STATES]
                     [-w WINDOW] [-r RECIPROCAL] [--batch BATCH]
