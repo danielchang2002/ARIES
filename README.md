@@ -64,3 +64,37 @@ Notes:
 - Reference filenames must match the corresponding input filename stem to enable scoring.
 - Required arguments: `--input` (or `-i`) and `--output-dir` (or `-o`).
 - Run `aries -h` to see all options and defaults.
+
+## CLI Reference
+
+```
+usage: run_aries.py -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
+                    [--compare {clustalo,clustalw}]
+                    [--plm PLM] [--num-hidden-states NUM_HIDDEN_STATES]
+                    [-w WINDOW] [-r RECIPROCAL] [--batch BATCH]
+                    [--blur BLUR] [--pad-char PAD_CHAR]
+                    [--medoid-topk MEDOID_TOPK] [--sim-metric SIM_METRIC]
+                    [--maxlen MAXLEN] [--device DEVICE] [--seed SEED]
+
+--input, -i            Dataset name (BAliBASE, HOMSTRAD, QuanTest2) or an input FASTA folder.
+--output-dir, -o       Directory to write ARIES alignments (FASTA). Created if missing.
+--ref-dir              Optional reference alignment directory (enables scoring).
+--compare              Run comparison aligners in addition to ARIES: clustalo and/or clustalw.
+
+--plm                  PLM name (esm2-35M, esm2-150M, esm2-650M, protbert, prottrans,
+                       prottrans-half, or a Hugging Face model name).
+--num-hidden-states    Number of hidden states to concat. Default: 9
+--window, -w           Context window size for similarity. Default: 5
+--reciprocal, -r       Reciprocal weighting for similarity. Default: 200.0
+--batch                PLM batch size. Default: 32
+--blur                 Gaussian blur sigma for similarity. Default: 3.0
+--pad-char             Padding character (default: X). Pass '!' to use the tokenizer's
+                       native pad token.
+--medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'logn' (ceil(log(n))),
+                       or a positive integer k. Default: logn
+--sim-metric           Similarity metric (l2-gm, l2, cosine, etc.). Default: l2-gm
+--maxlen               Max sequence length to include from dataset. Default: 1022
+
+--device               Device for PLM/ARIES (e.g., cuda or cpu). Default: cuda
+--seed                 Random seed. Default: 123
+```

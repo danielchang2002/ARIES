@@ -80,11 +80,37 @@ def parse_args():
     p.add_argument("-r", "--reciprocal", type=float, default=200.0, help="Reciprocal weighting for similarity.")
     p.add_argument("--batch", type=int, default=32, help="PLM batch size.")
     p.add_argument("--blur", type=float, default=3.0, help="Gaussian blur sigma for similarity.")
-    p.add_argument("--pad-char", default="X", help="Padding character for sequence padding.")
+    p.add_argument(
+        "--pad-char",
+        default="X",
+        help=(
+            "Padding character (default: X). "
+            "Pass '!' to use the tokenizer's native pad token."
+        ),
+    )
+
+    def _parse_medoid_topk(value: str):
+        v = value.strip().lower()
+        if v in ("log", "logn"):
+            return v
+        try:
+            k = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                "medoid-topk must be 'log', 'logn', or an integer"
+            ) from exc
+        if k <= 0:
+            raise argparse.ArgumentTypeError("medoid-topk integer must be > 0")
+        return k
+
     p.add_argument(
         "--medoid-topk",
-        default="log",
-        help="Medoid top-k selection: set k according to 'log' (ceil(log2(n))), or 'logn' (ceil(log(n))).",
+        type=_parse_medoid_topk,
+        default="logn",
+        help=(
+            "Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'logn' (ceil(log(n))), "
+            "or a positive integer k."
+        ),
     )
     p.add_argument("--sim-metric", default="l2-gm", help="Similarity metric (l2-gm, l2, cosine, etc.).")
     p.add_argument("--maxlen", type=int, default=1022, help="Max sequence length to include from dataset.")

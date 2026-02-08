@@ -51,7 +51,12 @@ class PLMWrapper(nn.Module):
     # Take input sequence, return input ids and attention_mask
     def tokenize(self, input_seqs):
         input_seqs = [' '.join(s) for s in input_seqs]
-        # input_seqs = [s.replace('!', '<pad>') for s in input_seqs]
+        # Allow using '!' as a stand-in for the tokenizer's pad token.
+        pad_tok = self.tokenizer.pad_token
+        if pad_tok is None:
+            # Fallback: treat '!' as a normal residue (X) when no pad token exists.
+            pad_tok = "X"
+        input_seqs = [s.replace('!', pad_tok) for s in input_seqs]
         tokenized_seqs = self.tokenizer(
             input_seqs,
             add_special_tokens=True,
