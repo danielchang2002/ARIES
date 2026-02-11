@@ -91,13 +91,15 @@ def parse_args():
 
     def _parse_medoid_topk(value: str):
         v = value.strip().lower()
-        if v in ("log", "logn"):
-            return v
+        if v == "log":
+            return "log"
+        if v in ("ln", "logn"):
+            return "ln"
         try:
             k = int(value)
         except ValueError as exc:
             raise argparse.ArgumentTypeError(
-                "medoid-topk must be 'log', 'logn', or an integer"
+                "medoid-topk must be 'log', 'ln', 'logn', or an integer"
             ) from exc
         if k <= 0:
             raise argparse.ArgumentTypeError("medoid-topk integer must be > 0")
@@ -106,9 +108,9 @@ def parse_args():
     p.add_argument(
         "--medoid-topk",
         type=_parse_medoid_topk,
-        default="logn",
+        default="ln",
         help=(
-            "Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'logn' (ceil(log(n))), "
+            "Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'ln' (ceil(ln(n))), "
             "or a positive integer k."
         ),
     )
@@ -133,7 +135,7 @@ def aries(
     batch=32,
     blur=3.0,
     pad_char="X",
-    medoid_topk="log",
+    medoid_topk="ln",
     sim_metric="l2-gm",
     device="cuda",
     seed=123,

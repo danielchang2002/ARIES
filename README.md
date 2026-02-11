@@ -90,8 +90,8 @@ usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
 --blur                 Gaussian blur sigma for similarity. Default: 3.0
 --pad-char             Padding character (default: X). Pass '!' to use the tokenizer's
                        native pad token.
---medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'logn' (ceil(log(n))),
-                       or a positive integer k. Default: logn
+--medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'ln' (ceil(ln(n))),
+                       or a positive integer k. Default: ln
 --sim-metric           Similarity metric (l2-gm, l2, cosine, etc.). Default: l2-gm
 --maxlen               Max sequence length to include from dataset. Default: 1022
 

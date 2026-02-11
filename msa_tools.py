@@ -169,7 +169,7 @@ def topk_medoids(seqs, k=1, mode='edit', **kwargs):
     n = len(seqs)
     if k == 'log':
         k = min(n, math.ceil(math.log2(n)))
-    elif k == 'logn':
+    elif k in ('ln', 'logn'):
         k = min(n, math.ceil(math.log(n)))
     assert isinstance(k, int), 'non-integer k'
     if mode == 'edit':
