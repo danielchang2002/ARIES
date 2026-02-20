@@ -73,7 +73,7 @@ usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
                     [--plm PLM] [--num-hidden-states NUM_HIDDEN_STATES]
                     [-w WINDOW] [-r RECIPROCAL] [--batch BATCH]
                     [--blur BLUR] [--pad-char PAD_CHAR]
-                    [--medoid-topk MEDOID_TOPK] [--sim-metric SIM_METRIC]
+                    [--medoid-topk MEDOID_TOPK]
                     [--maxlen MAXLEN] [--device DEVICE] [--seed SEED]
 
 --input, -i            Dataset name (BAliBASE, HOMSTRAD, QuanTest2) or an input FASTA folder.
@@ -90,11 +90,10 @@ usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
 --blur                 Gaussian blur sigma for similarity. Default: 3.0
 --pad-char             Padding character (default: X). Pass '!' to use the tokenizer's
                        native pad token.
---medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 'ln' (ceil(ln(n))),
-                       or a positive integer k. Default: ln
---sim-metric           Similarity metric (l2-gm, l2, cosine, etc.). Default: l2-gm
---maxlen               Max sequence length to include from dataset. Default: 1022
-
+--medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 
+                       'ln' (ceil(ln(n))), or a positive integer k. Default: ln
+--maxlen               Max sequence length to include from dataset. If set above 1022, 
+                       residues will be processed via PLM tiling.Default: 1022
 --device               Device for PLM/ARIES (e.g., cuda or cpu). Default: cuda
 --seed                 Random seed. Default: 123
 ```

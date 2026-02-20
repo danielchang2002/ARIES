@@ -114,8 +114,7 @@ def parse_args():
             "or a positive integer k."
         ),
     )
-    p.add_argument("--sim-metric", default="l2-gm", help="Similarity metric (l2-gm, l2, cosine, etc.).")
-    p.add_argument("--maxlen", type=int, default=1022, help="Max sequence length to include from dataset.")
+    p.add_argument("--maxlen", type=int, default=1022, help="Max sequence length to include from dataset. Any alignments including sequenes longer than this will be skipped. Sequences longer than 1022 will be processed via PLM tiling.")
 
     # runtime
     p.add_argument("--device", default="cuda", help="Device for PLM/ARIES (e.g., cuda or cpu).")
@@ -136,7 +135,6 @@ def aries(
     blur=3.0,
     pad_char="X",
     medoid_topk="ln",
-    sim_metric="l2-gm",
     device="cuda",
     seed=123,
     maxlen=1022,
@@ -147,6 +145,8 @@ def aries(
     set_seed(seed)
 
     compare = compare or []
+    if maxlen > 1022:
+        print("Warning: --maxlen > 1022: sequences above 1022 residues will be processed via PLM tiling.")
     if device.startswith("cuda") and (not torch.cuda.is_available() or torch.cuda.device_count() == 0):
         print("Warning: CUDA not available, falling back to CPU.")
         device = "cpu"
@@ -170,7 +170,7 @@ def aries(
         "pad_char": pad_char,
         "medoid_mode": "dnd",
         "medoid_topk": medoid_topk,
-        "sim_metric": sim_metric,
+        "sim_metric": "l2-gm",
     }
 
     resolved_ref_dir = ref_dir
@@ -242,7 +242,6 @@ def main():
         blur=args.blur,
         pad_char=args.pad_char,
         medoid_topk=args.medoid_topk,
-        sim_metric=args.sim_metric,
         device=args.device,
         seed=args.seed,
         maxlen=args.maxlen,

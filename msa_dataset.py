@@ -46,7 +46,12 @@ class FastaFolderDataset(MSADataset):
             msa = {k: s.upper() for k, s in msa.items()}
             ungapped = [s.replace(".", "").replace("-", "") for s in msa.values()]
             lengths = [len(s) for s in ungapped]
-            if (np.min(lengths) < self.min_len) or (np.max(lengths) > self.max_len):
+            max_observed_len = int(np.max(lengths))
+            if (np.min(lengths) < self.min_len) or (max_observed_len > self.max_len):
+                print(
+                    f"Warning: Skipping {msa_name}: max sequence length in file is "
+                    f"{max_observed_len}, which exceeds --maxlen={self.max_len}"
+                )
                 continue
 
             if not self.include_refs:
