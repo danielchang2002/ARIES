@@ -82,7 +82,7 @@ usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
 --compare              Run comparison aligners in addition to ARIES: clustalo and/or clustalw.
 
 --plm                  PLM name (esm2-35M, esm2-150M, esm2-650M, protbert, prottrans,
-                       prottrans-half, or a Hugging Face model name).
+                       prottrans-half, or a Hugging Face model name). Default: esm2-650M
 --num-hidden-states    Number of hidden states to concat. Default: 9
 --window, -w           Context window size for similarity. Default: 5
 --reciprocal, -r       Reciprocal weighting for similarity. Default: 200.0
@@ -93,7 +93,7 @@ usage: aries -i INPUT -o OUTPUT_DIR [--ref-dir REF_DIR]
 --medoid-topk          Medoid top-k selection for template synthesis: 'log' (ceil(log2(n))), 
                        'ln' (ceil(ln(n))), or a positive integer k. Default: ln
 --maxlen               Max sequence length to include from dataset. If set above 1022, 
-                       residues will be processed via PLM tiling.Default: 1022
+                       residues will be processed via PLM tiling. Default: 1022
 --device               Device for PLM/ARIES (e.g., cuda or cpu). Default: cuda
 --seed                 Random seed. Default: 123
 ```
