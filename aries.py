@@ -19,6 +19,7 @@ class ARIES:
         # medoid config
         self.medoid_mode = kwargs.get('medoid_mode', 'edit')
         self.topk = kwargs.get('medoid_topk', 'log')
+        self.guide_tree_tool = kwargs.get('guide_tree_tool', 'clustalo')
         
         # sim config
         self.sim_metric = kwargs.get('sim_metric', 'l2-gm')
@@ -36,19 +37,17 @@ class ARIES:
             return embeddings, logits
         return embeddings
 
-    def build_msa(self, embeddings, seqs, consensus_embedding, verbose=True):
-        if verbose:
-            print(f'>>>> Aligning with template')
-        scores, paths, pairwise_scores = self.aligner.align_embeddings(
-            consensus_embedding, embeddings, 
-            w=self.w, 
-            reciprocal=self.r, 
-            blur=self.g, 
-            return_scores=True, 
-            sim_metric=self.sim_metric
-        )
-        num_seqs = len(seqs)
+    def build_msa(self, embeddings, seqs, consensus_embedding, verbose=True, paths=None, pairwise_scores=None):
         template_length = consensus_embedding.shape[0] - 2 * self.w
+        if paths is None:
+            if verbose:
+                print(f'>>>> Aligning with template')
+            _, paths, pairwise_scores = self.aligner.align_embeddings(
+                consensus_embedding, embeddings,
+                w=self.w, reciprocal=self.r, blur=self.g,
+                return_scores=True, sim_metric=self.sim_metric
+            )
+        num_seqs = len(seqs)
         edges = []
         for i in range(num_seqs):
             edges.append(torch.zeros(template_length, len(seqs[i]), dtype=int))
@@ -59,10 +58,10 @@ class ARIES:
         for i in range(len(edges)):
             for j in range(len(seqs[i])):
                 template_residues = torch.where(edges[i][:, j])[0]
-                best_match = template_residues[torch.argmax(pairwise_scores[i][template_residues, j])]                
+                best_match = template_residues[torch.argmax(pairwise_scores[i][template_residues, j])]
                 edges[i][template_residues, j] = 0
                 edges[i][best_match, j] = 1
-        
+
         if verbose:
             print(f'>>>> Inferring anchors')
         cols = []
@@ -74,7 +73,7 @@ class ARIES:
                     col_left.append('')
                     col_right.append('')
                     continue
-                best_match_idx = torch.argmax(pairwise_scores[i][t][edges_from_t])                
+                best_match_idx = torch.argmax(pairwise_scores[i][t][edges_from_t])
                 left_idx = edges_from_t[:best_match_idx + 1].tolist()
                 right_idx = edges_from_t[best_match_idx + 1:].tolist()
                 col_left.append(''.join([seqs[i][j] for j in left_idx]))
@@ -85,7 +84,7 @@ class ARIES:
                 continue
             else:
                 cols.append((col_left, col_right))
-        
+
         if verbose:
             print(f'>>>> Centering columns')
         for t, (col_left, col_right) in enumerate(cols):
@@ -94,7 +93,7 @@ class ARIES:
             col = []
             for i in range(num_seqs):
                 pad_left = (left_width - len(col_left[i])) * '-'
-                pad_right = (right_width - len(col_right[i])) * '-'             
+                pad_right = (right_width - len(col_right[i])) * '-'
                 col.append(pad_left + col_left[i] + col_right[i] + pad_right)
             cols[t] = col
         alns = [
@@ -103,31 +102,58 @@ class ARIES:
         ]
         del cols
         return alns
-    
+
     def align(self, seqs, **kwargs):
-        print(f'Embed sequences with PLM')
-        t = time.time()
-        embeddings = self.get_embeddings(seqs)
-        emb_time = time.time() - t
         print(f'Building template')
-        t = time.time()        
+        t = time.time()
         msa_name = kwargs['msa_name']
-        path = f'{temp_dir}/{msa_name}_clustalw.dnd'
-        if not os.path.exists(path):
-            run_clustalw(seqs, msa_name)
-        medoids = topk_medoids(seqs, k=self.topk, mode=self.medoid_mode, **kwargs)
-        
-        # Synthesize medoid embedding
-        medoid_embs = [embeddings[m] for m in medoids]
+        if self.medoid_mode == 'dnd':
+            if self.guide_tree_tool == 'clustalo':
+                path = f'{temp_dir}/{msa_name}_clustalo.dnd'
+                if not os.path.exists(path):
+                    run_clustalo(seqs, msa_name, guidetree_only=True)
+            else:
+                path = f'{temp_dir}/{msa_name}_clustalw.dnd'
+                if not os.path.exists(path):
+                    run_clustalw(seqs, msa_name, guidetree_only=True)
+        medoids = topk_medoids(seqs, k=self.topk, mode=self.medoid_mode,
+                               guide_tree_tool=self.guide_tree_tool, **kwargs)
+        if self.medoid_mode == 'dnd' and any(m >= len(seqs) for m in medoids):
+            # Stale cached .dnd from a run with more sequences — regenerate.
+            os.remove(path)
+            if self.guide_tree_tool == 'clustalo':
+                run_clustalo(seqs, msa_name, guidetree_only=True)
+            else:
+                run_clustalw(seqs, msa_name, guidetree_only=True)
+            medoids = topk_medoids(seqs, k=self.topk, mode=self.medoid_mode,
+                                   guide_tree_tool=self.guide_tree_tool, **kwargs)
         medoid_seqs = [seqs[m] for m in medoids]
-        global_medoid_emb = embeddings[medoids[0]]
+
+        print(f'Embed {len(medoid_seqs)} medoid sequences with PLM')
+        t_emb = time.time()
+        medoid_embs = self.get_embeddings(medoid_seqs)
+        emb_time = time.time() - t_emb
+
+        global_medoid_emb = medoid_embs[0]
         medoid_aln = self.build_msa(medoid_embs, medoid_seqs, global_medoid_emb)
         consensus = [s.replace('-', 'X') for s in medoid_aln]
         consensus_emb = torch.stack(self.get_embeddings(consensus), dim=0)
         mask = torch.tensor([[1 if c != '-' else 0 for c in s] for s in polyX_paddings(medoid_aln, pad_char=self.pad_char, w=self.w)]).to(consensus_emb.device)
         consensus_emb = (consensus_emb * mask[:, :, None]).sum(dim=0) / mask.sum(dim=0)[:, None]
-        print(f'Building MSA given template')
 
-        alns = self.build_msa(embeddings, seqs, consensus_emb)
+        print(f'Building MSA given template')
+        print(f'Embed {len(seqs)} sequences with PLM')
+        all_paths, all_scores = [], []
+        for i in range(0, len(seqs), self.b):
+            batch_embs = self.get_embeddings(seqs[i:i + self.b])
+            _, paths, scores = self.aligner.align_embeddings(
+                consensus_emb, batch_embs,
+                w=self.w, reciprocal=self.r, blur=self.g,
+                return_scores=True, sim_metric=self.sim_metric,
+            )
+            all_paths.extend(paths)
+            all_scores.extend(scores)
+
+        alns = self.build_msa(None, seqs, consensus_emb, paths=all_paths, pairwise_scores=all_scores)
         aln_time = time.time() - t
         return alns, (emb_time, aln_time)

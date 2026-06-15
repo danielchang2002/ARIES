@@ -113,7 +113,7 @@ class PLMWrapper(nn.Module):
             enc_embeddings, logits = self.forward_small_batch(input_ids, attn_mask, **kwargs)
         else:
             enc_embeddings, logits = [], []
-            for j in trange(0, len(tiles), batch):
+            for j in trange(0, len(tiles), batch, disable=len(tiles) <= batch):
                 batch_end = min(j + batch, len(tiles))
                 ij, aj, = input_ids[j: batch_end], attn_mask[j: batch_end]
                 ej, lj = self.forward_small_batch(ij, aj, **kwargs)

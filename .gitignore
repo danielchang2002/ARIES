@@ -15,3 +15,9 @@ __pycache__/
 tmp/
 temp/
 .cache/
+
+# Alignment outputs (large, cluster-local)
+outputs/
+
+# SLURM scripts and logs (cluster-local)
+slurm/

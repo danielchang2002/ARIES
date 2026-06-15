@@ -1,7 +1,6 @@
 from utils import *
 from collections import defaultdict, Counter
 from Bio import Phylo
-from io import StringIO
 
 def sequence_identity(s1, s2, ignore_gaps=True):
     assert len(s1) == len(s2), 'sequences must align'
@@ -190,8 +189,9 @@ def topk_medoids(seqs, k=1, mode='edit', **kwargs):
         del D, total_dist
     elif mode == 'dnd':
         msa_name = kwargs['msa_name']
-        dnd_path = f'{temp_dir}/{msa_name}_clustalw.dnd'
-        medoids = topk_medoids_from_dnd(dnd_path, k) 
+        guide_tree_tool = kwargs.get('guide_tree_tool', 'clustalo')
+        dnd_path = f'{temp_dir}/{msa_name}_{guide_tree_tool}.dnd'
+        medoids = topk_medoids_from_dnd(dnd_path, k)
     return medoids
 
 def topk_medoids_from_dnd(dnd_path, k=1):
@@ -216,27 +216,34 @@ def topk_medoids_from_dnd(dnd_path, k=1):
     # ---- Arrays for DP ----
     size = [0] * n          # number of descendant nodes
     dist_sum = [0.0] * n    # total distance from this node to nodes in its subtree
-    # ---- First DFS: postorder accumulation ----
-    def dfs1(u, parent):
-        size[u] = 1
-        dist_sum[u] = 0.0
-        for v, w in adj[u]:
-            if v == parent:
-                continue
-            dfs1(v, u)
-            size[u] += size[v]
-            dist_sum[u] += dist_sum[v] + w * size[v]
-    # ---- Second DFS: rerooting to propagate total distances ----
-    def dfs2(u, parent):
+    # ---- First DFS: postorder accumulation (iterative) ----
+    root = 0
+    stack = [(root, -1, False)]
+    while stack:
+        u, parent, processed = stack.pop()
+        if processed:
+            for v, w in adj[u]:
+                if v == parent:
+                    continue
+                size[u] += size[v]
+                dist_sum[u] += dist_sum[v] + w * size[v]
+        else:
+            size[u] = 1
+            dist_sum[u] = 0.0
+            stack.append((u, parent, True))
+            for v, w in adj[u]:
+                if v == parent:
+                    continue
+                stack.append((v, u, False))
+    # ---- Second DFS: rerooting to propagate total distances (iterative) ----
+    stack = [(root, -1)]
+    while stack:
+        u, parent = stack.pop()
         for v, w in adj[u]:
             if v == parent:
                 continue
             dist_sum[v] = dist_sum[u] + w * (n - 2 * size[v])
-            dfs2(v, u)
-    # ---- Run the two DFS passes ----
-    root = 0
-    dfs1(root, -1)
-    dfs2(root, -1)
+            stack.append((v, u))
     # ---- Collect leaf distances and pick top-k ----
     leaf_dists = [(all_nodes[i].name, dist_sum[i]) for i in leaves]
     leaf_dists.sort(key=lambda x: x[1])
