@@ -1,5 +1,6 @@
 from utils import *
 from itertools import combinations
+import xml.etree.ElementTree as ET
 
 AA = list("ARNDCQEGHILKMFPSTWYVBJZX*")
 blosum_matrix = [
@@ -285,3 +286,97 @@ def cosine_similarity(e0, e1, w, reciprocal=200.0, blur=3.0, device='cuda'):
 
     torch.cuda.empty_cache()
     return S
+
+
+def load_core_domain(xml_path, msa_order):
+    """Parse BAliBASE XML and return (domain_targets, domain_reference, residue_index_sets) for core-block scoring."""
+    try:
+        root = ET.parse(xml_path).getroot()
+    except Exception:
+        return None
+
+    seq_map = {}
+    for seq_node in root.findall('.//sequence'):
+        name_node, data_node = seq_node.find('seq-name'), seq_node.find('seq-data')
+        if name_node is None or data_node is None or not name_node.text or not data_node.text:
+            continue
+        seq_map[name_node.text.strip()] = data_node.text.replace('\n', '').replace(' ', '').upper().replace('.', '-')
+    if not seq_map:
+        return None
+
+    norm_map = {''.join(c for c in k.upper() if c.isalnum()): v for k, v in seq_map.items()}
+    ordered = []
+    for key in msa_order:
+        seq = seq_map.get(key) or norm_map.get(''.join(c for c in key.upper() if c.isalnum()))
+        if seq is None:
+            return None
+        ordered.append(seq)
+
+    core_mask = None
+    for colscore in root.findall('.//column-score'):
+        name_node = colscore.find('colsco-name')
+        if name_node is None or (name_node.text or '').strip() != 'coreblock':
+            continue
+        data_node = colscore.find('colsco-data')
+        if data_node is not None and data_node.text:
+            try:
+                core_mask = [int(tok) == 1 for tok in data_node.text.split()]
+            except ValueError:
+                pass
+        break
+    if core_mask is None:
+        return None
+
+    aln_len = len(ordered[0])
+    if len(core_mask) < aln_len:
+        core_mask = core_mask + [False] * (aln_len - len(core_mask))
+    else:
+        core_mask = core_mask[:aln_len]
+
+    keep_cols = [i for i, keep in enumerate(core_mask) if keep]
+    if not keep_cols:
+        return None
+
+    domain_reference = [''.join(seq[i] for i in keep_cols) for seq in ordered]
+    domain_targets = [seq.replace('-', '') for seq in domain_reference]
+
+    residue_index_sets = []
+    for seq in ordered:
+        keep, res_idx = set(), 0
+        for col, ch in enumerate(seq):
+            if ch != '-':
+                if core_mask[col]:
+                    keep.add(res_idx)
+                res_idx += 1
+        residue_index_sets.append(keep)
+
+    return domain_targets, domain_reference, residue_index_sets
+
+
+def project_to_domain(full_aln, idx_sets, targets):
+    """Project a full predicted alignment to core-block residues only."""
+    if not full_aln or len(full_aln) != len(idx_sets) or len(full_aln) != len(targets):
+        return None
+    ncols = len(full_aln[0])
+    if any(len(s) != ncols for s in full_aln):
+        return None
+
+    projected_rows = []
+    for seq, keep_indices in zip(full_aln, idx_sets):
+        row, res_idx = [], 0
+        for ch in seq:
+            if ch == '-':
+                row.append('-')
+            else:
+                row.append(ch if res_idx in keep_indices else '-')
+                res_idx += 1
+        projected_rows.append(row)
+
+    keep_cols = [c for c in range(ncols) if any(projected_rows[r][c] != '-' for r in range(len(projected_rows)))]
+    if not keep_cols:
+        return None
+
+    domain_aln = [''.join(row[c] for c in keep_cols) for row in projected_rows]
+    if any(s.replace('-', '') != t for s, t in zip(domain_aln, targets)):
+        return None
+    return domain_aln

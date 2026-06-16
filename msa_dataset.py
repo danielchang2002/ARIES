@@ -7,6 +7,10 @@ DATASET_DIRS = {
     'QuanTest2': "./datasets/QuanTest2/inputs",
 }
 
+DATASET_XML_DIRS = {
+    'BAliBASE': "./datasets/BAliBASE/xml",
+}
+
 class MSADataset(Dataset):
     def __init__(self, msa_dir, min_len=0, max_len=1022):
         self.min_len = min_len

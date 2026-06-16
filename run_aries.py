@@ -2,8 +2,9 @@ import argparse
 import os
 from typing import List
 
-from msa_dataset import get_dataset, prepare_ref_eval, DATASET_DIRS, _resolve_ref_dir
+from msa_dataset import get_dataset, prepare_ref_eval, DATASET_DIRS, DATASET_XML_DIRS, _resolve_ref_dir
 from msa_tools import evaluate_msa
+from scoring import load_core_domain, project_to_domain
 from plm_wrapper import PLMWrapper
 from transformers.utils import logging as hf_logging
 from aries import ARIES
@@ -63,6 +64,14 @@ def parse_args():
             "Reference files must be FASTA (.aln/.fasta/.fa) and match input file stems. "
             "If omitted and --input is a known dataset, references are resolved from "
             "./datasets/<name>/reference_outputs and scoring is enabled."
+        ),
+    )
+    p.add_argument(
+        "--xml-dir",
+        default=None,
+        help=(
+            "Path to BAliBASE bb3_release directory. If provided, SP/TC scores are computed "
+            "against core-block regions only (using XML colsco-data masks)."
         ),
     )
     p.add_argument(
@@ -126,6 +135,7 @@ def aries(
     input_path,
     output_dir,
     ref_dir=None,
+    xml_dir=None,
     compare=None,
     plm="esm2-650M",
     num_hidden_states=9,
@@ -177,6 +187,7 @@ def aries(
     if resolved_ref_dir is None and input_path in DATASET_DIRS:
         resolved_ref_dir = _resolve_ref_dir(input_path)
     include_refs = resolved_ref_dir is not None
+    resolved_xml_dir = xml_dir if xml_dir is not None else DATASET_XML_DIRS.get(input_path)
     loader = get_dataset(input_path, include_refs=include_refs, ref_dir=resolved_ref_dir, max_len=maxlen)
 
     clustalo_aligner = MSAClustalO() if "clustalo" in compare else None
@@ -210,18 +221,37 @@ def aries(
             write_fasta(aries_aln, ids, out_path)
 
             if resolved_ref_dir is not None and ref_msa:
-                aries_eval = prepare_ref_eval(aries_aln, ref_indices, ref_mask)
-                aries_sp, aries_tc = evaluate_msa(aries_eval, ref_msa)
-                parts = [f"ARIES SP={aries_sp:.3f} TC={aries_tc:.3f}"]
+                if resolved_xml_dir is not None:
+                    xml_path = os.path.join(resolved_xml_dir, f"RV{msa_name[2:4]}", f"{msa_name}.xml")
+                    loaded = load_core_domain(xml_path, ids)
+                else:
+                    loaded = None
 
-                if clustalo_aln is not None:
-                    clustalo_eval = prepare_ref_eval(clustalo_aln, ref_indices, ref_mask)
-                    clustalo_sp, clustalo_tc = evaluate_msa(clustalo_eval, ref_msa)
-                    parts.append(f"ClustalO SP={clustalo_sp:.3f} TC={clustalo_tc:.3f}")
-                if clustalw_aln is not None:
-                    clustalw_eval = prepare_ref_eval(clustalw_aln, ref_indices, ref_mask)
-                    clustalw_sp, clustalw_tc = evaluate_msa(clustalw_eval, ref_msa)
-                    parts.append(f"ClustalW SP={clustalw_sp:.3f} TC={clustalw_tc:.3f}")
+                if loaded is not None:
+                    domain_targets, domain_ref, idx_sets = loaded
+                    def _score(aln):
+                        proj = project_to_domain(aln, idx_sets, domain_targets)
+                        return evaluate_msa(proj, domain_ref) if proj is not None else (float('nan'), float('nan'))
+                    aries_sp, aries_tc = _score(aries_aln)
+                    parts = [f"ARIES SP={aries_sp:.3f} TC={aries_tc:.3f}"]
+                    if clustalo_aln is not None:
+                        sp, tc = _score(clustalo_aln)
+                        parts.append(f"ClustalO SP={sp:.3f} TC={tc:.3f}")
+                    if clustalw_aln is not None:
+                        sp, tc = _score(clustalw_aln)
+                        parts.append(f"ClustalW SP={sp:.3f} TC={tc:.3f}")
+                else:
+                    aries_eval = prepare_ref_eval(aries_aln, ref_indices, ref_mask)
+                    aries_sp, aries_tc = evaluate_msa(aries_eval, ref_msa)
+                    parts = [f"ARIES SP={aries_sp:.3f} TC={aries_tc:.3f}"]
+                    if clustalo_aln is not None:
+                        clustalo_eval = prepare_ref_eval(clustalo_aln, ref_indices, ref_mask)
+                        clustalo_sp, clustalo_tc = evaluate_msa(clustalo_eval, ref_msa)
+                        parts.append(f"ClustalO SP={clustalo_sp:.3f} TC={clustalo_tc:.3f}")
+                    if clustalw_aln is not None:
+                        clustalw_eval = prepare_ref_eval(clustalw_aln, ref_indices, ref_mask)
+                        clustalw_sp, clustalw_tc = evaluate_msa(clustalw_eval, ref_msa)
+                        parts.append(f"ClustalW SP={clustalw_sp:.3f} TC={clustalw_tc:.3f}")
                 print(" | ".join(parts))
             elif resolved_ref_dir is not None:
                 print("No reference alignment found; skipping evaluation.")
@@ -233,6 +263,7 @@ def main():
         input_path=args.input,
         output_dir=args.output_dir,
         ref_dir=args.ref_dir,
+        xml_dir=args.xml_dir,
         compare=args.compare,
         plm=args.plm,
         num_hidden_states=args.num_hidden_states,
